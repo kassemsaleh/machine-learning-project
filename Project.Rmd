@@ -1,0 +1,130 @@
+---
+title: "Practical Machine Learning Project - Prediction"
+author: "Kassem Saleh"
+date: "May 26, 2016"
+output:
+  html_document:
+    fig_height: 9
+    fig_width: 9
+
+---
+## Introduction  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise.  
+
+
+
+```{r, message=FALSE}
+require(caret)
+require(corrplot)
+require(rpart)
+require(rpart.plot)
+require(Rtsne)
+require(xgboost)
+require(stats)
+require(knitr)
+require(ggplot2)
+knitr::opts_chunk$set(cache=TRUE, echo = TRUE)
+```
+### Download the Data if they don't exist 
+```{r, cache = T}
+trainingUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainingFile <- "./pml-training.csv"
+testingFile  <- "./pml-testing.csv"
+
+if (!file.exists(trainingFile)) {
+  download.file(trainingUrl, destfile=trainingFile, method="curl")
+}
+if (!file.exists(testingFile)) {
+  download.file(testingUrl, destfile=testingFile, method="curl")
+}
+```  
+### Reading the data into data frames 
+ 
+```{r, cache = T}
+trainingRaw <- read.csv("./pml-training.csv")
+testingRaw <- read.csv("./pml-testing.csv")
+dim(trainingRaw)
+dim(testingRaw)
+```
+
+
+### Cleaning the data
+removing missing values and meaningless variables.
+
+```{r, cache = T}
+sum(complete.cases(trainingRaw))
+```
+
+First, remove columns containing missing values.
+```{r, cache = T}
+trainingRaw <- trainingRaw[, colSums(is.na(trainingRaw)) == 0] 
+testingRaw <- testingRaw[, colSums(is.na(testingRaw)) == 0] 
+```  
+
+Next, we remove columns that do not contribute to the accelerometer measurements.
+
+```{r, cache = T}
+classe <- trainingRaw$classe
+trainingRemove <- grepl("^X|timestamp|window", names(trainingRaw))
+trainingRaw <- trainingRaw[, !trainingRemove]
+trainingCleaned <- trainingRaw[, sapply(trainingRaw, is.numeric)]
+trainingCleaned$classe <- classe
+testingRemove <- grepl("^X|timestamp|window", names(testingRaw))
+testingRaw <- testingRaw[, !testingRemove]
+testingCleaned <- testingRaw[, sapply(testingRaw, is.numeric)]
+```
+
+### Partition the data
+Then, we can partition the cleaned training set into a pure training data set (70%) and a validation data set (30%). We will use the validation data set to conduct cross validation in future steps. 
+
+```{r, cache = T}
+set.seed(22519) # For reproducibile purpose
+inTrain <- createDataPartition(trainingCleaned$classe, p=0.70, list=F)
+trainingData <- trainingCleaned[inTrain, ]
+testingData <- trainingCleaned[-inTrain, ]
+```
+
+## Data Modeling
+We fit a predictive model for activity recognition using the randomForest algorithm. We  use 5-fold cross validation when applying the algorithm.  
+
+```{r, cache = T}
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+modelRf
+```
+
+Then, we estimate the performance of the model on the validation data set.  
+
+```{r, cache = T}
+predictRf <- predict(modelRf, testingData)
+confusionMatrix(testingData$classe, predictRf)
+```
+```{r, cache = T}
+accuracy <- postResample(predictRf, testingData$classe)
+accuracy
+outOfSampleError <- 1 - as.numeric(confusionMatrix(testingData$classe, predictRf)$overall[1])
+outOfSampleError
+```
+So, the estimated accuracy of the model is 99.38% and the estimated out-of-sample error is 0.61%.
+
+## Test Data Set prediction
+Now, we apply the model to the original testing data set downloaded from the data source. 
+
+```{r, cache = T}
+predictionResults <- predict(modelRf, testingCleaned[, -length(names(testingCleaned))])
+predictionResults
+```  
+
+## Visualization of Decision Tree 
+```{r, cache = T}
+treeModel <- rpart(classe ~ ., data=trainingData, method="class")
+prp(treeModel) 
+```
+
+
+## Visualization of Correlation Matrix  
+```{r, cache = T}
+corrPlot <- cor(trainingData[, -length(names(trainingData))])
+corrplot(corrPlot, method="color")
+```
